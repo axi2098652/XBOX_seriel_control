@@ -1,99 +1,135 @@
 # Xbox 360 串口控制台
 
-Windows 11 / Python 3 / PySide6 / pyserial 桌面程序。通过 Windows XInput 读取 Xbox 360 或其他兼容 XInput 的手柄，并通过 USB 转串口发送完整状态。
+将 Xbox 手柄输入转换为下位机可接收的串口数据。
 
-## 安装和启动
+本项目是运行于 Windows 11 的 Python 桌面工具，通过 XInput 获取手柄状态，并经 USB 转串口模块发送给 STM32 等下位机。界面可实时查看摇杆、扳机和按键状态，适用于手柄控制接入、串口协议调试和嵌入式项目联调。
 
-**日常使用：双击本目录的 `start.bat` 即可启动黑色界面，不需要输入命令。**
-脚本自动定位项目虚拟环境，通过 `pythonw.exe` 启动，启动后不会保留命令行窗口。
-如果虚拟环境缺失，脚本会提示；如果运行依赖缺失，程序会弹窗提示。
+```text
+Xbox / XInput 手柄 → Windows 上位机 → USB 转串口 → 下位机
+```
 
-首次部署到尚未建立虚拟环境的电脑时，在本目录打开 PowerShell，推荐使用 64 位 Python 3.10 或更新版本：
+## 功能介绍
+
+- **实时状态显示**：二维坐标显示左右摇杆，进度条显示 LT / RT，按键按下时高亮。
+- **完整状态发送**：每帧同时包含四个摇杆轴、两个扳机和数字按键，默认以 100 Hz 发送。
+- **串口连接管理**：自动扫描可用端口，支持手动刷新、打开和关闭，通信参数固定为 115200 8N1。
+- **发送监视器**：支持 HEX 与 Text 显示，Text 可选择 UTF-8 或 GBK，保留最近 500 帧。
+- **断线处理**：手柄断开后暂停发送并自动检测重连；串口异常时显示原因并关闭端口。
+- **黑色界面与双击启动**：完成首次安装后，通过 `start.bat` 启动；关闭窗口时自动停止工作线程并释放串口。
+
+## 使用前准备
+
+| 项目 | 要求 |
+|---|---|
+| 操作系统 | Windows 11 |
+| Python | 64 位 Python 3.10 或更新版本 |
+| 手柄 | Xbox 360 或其他兼容 Windows XInput 的手柄 |
+| 串口设备 | USB 转串口模块，以及正确安装的设备驱动 |
+| 下位机 | 按本项目协议接收数据的 STM32 或其他控制器 |
+| 软件依赖 | PySide6、pyserial，由 `requirements.txt` 安装 |
+
+将手柄连接到电脑，将 USB 转串口模块连接到电脑和下位机。确认串口模块与下位机的接口电平兼容，并按各自硬件说明接线。
+
+## 安装与启动
+
+### 1. 获取项目
+
+在 GitHub 仓库页面选择 **Code → Download ZIP** 并解压，或使用 Git：
+
+```powershell
+git clone https://github.com/axi2098652/XBOX_seriel_control.git
+cd XBOX_seriel_control
+```
+
+### 2. 首次安装依赖
+
+在包含 `main.py` 的项目目录打开 PowerShell，执行：
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-首次使用时，请先按上述命令创建虚拟环境并安装依赖，之后双击 `start.bat` 启动。首次安装依赖需要网络，不需要激活虚拟环境。
+安装依赖需要网络。虚拟环境保存在项目内的 `.venv` 目录，不需要手动激活。
 
-1. 连接 XInput 手柄。程序自动扫描索引 0～3，选中第一个可用手柄，连接期间持续使用该手柄。
-2. 插入 USB 转串口模块，从列表选择 COM 端口；可手动刷新，也会每 2 秒自动扫描。
-3. 点击 **Open Serial**。参数固定为 115200 8N1，打开后自动开始发送已连接手柄的状态。
-4. 摇杆坐标区、LT/RT 进度条及 14 个按键指示实时刷新。
-5. 发送监视器可切换 HEX、Text/UTF-8、Text/GBK。Text 使用 `errors="replace"`，不可读字符属于正常现象。
-6. 点击 **Close Serial** 停止串口发送；关闭窗口时停止后续发送，等待正在进行的设备操作返回，关闭串口并释放计时资源，确认工作线程退出后窗口才关闭。退出等待期间界面仍响应并显示关闭提示。
+### 3. 启动程序
 
-## 运行约定
+双击项目目录中的 **`start.bat`**。
 
-- 每个采样周期读取一次完整手柄快照，串口打开时一次 `write()` 提交完整 17 字节帧。即使 XInput 的包序号未变化，也会发送。
-- 默认目标周期为 10 ms；修改 `controller.py` 中 `SEND_INTERVAL_MS` 可调整。采用单调时钟调度，超时后跳过积压周期，不突发补发旧状态。Windows 下并非硬实时。
-- 工作线程在 Windows 上请求 1 ms 计时精度，退出时配对释放。Windows 11 在窗口最小化或完全被遮挡时不保证保持提高后的计时精度，联调时应保持窗口可见并实测周期。[Microsoft timeBeginPeriod 说明](https://learn.microsoft.com/en-us/windows/win32/api/timeapi/nf-timeapi-timebeginperiod)
-- GUI 使用精确定时器，目标每 10 ms（100 Hz）读取后台快照并刷新；实际频率受系统负载影响。I/O、采样和串口扫描由独立线程处理。
-- 手柄缺席或断开：清零显示并暂停发送；每 500 ms 探测重连。自动选择当前可用手柄，不提供多手柄同时发送。
-- 串口不存在、占用、写超时、短写或拔出：显示错误原因；发送失败后关闭串口，排除故障后手动重新打开。即使没有手柄，周期性端口扫描仍检测串口消失。
-- 监视器仅记录成功完整写入的帧，最多保留最近 500 帧。清空显示不重置累计发送计数。
-- 上位机无 MCU 应答功能，写入成功不等于 MCU 收到。下位机应实现接收超时处理，具体见协议指南。
-- 不使用死区过滤；保留原始摇杆、扳机数值。XInput 保留的按钮位 10/11 被清零。
+启动脚本会使用项目虚拟环境运行程序，启动后不保留命令行窗口。之后再次使用时，直接双击即可，无需重复安装依赖。
 
-## 文件结构
+## 操作指南
 
-| 文件 | 职责 |
+1. **确认手柄连接**：启动后查看顶部连接状态。程序自动选择第一个可用的 XInput 手柄，并在连接期间持续读取该手柄。
+2. **选择串口**：在下拉列表中选择 USB 转串口模块对应的 COM 端口。端口列表每 2 秒自动刷新，也可点击“刷新串口”。
+3. **开始发送**：点击 **Open Serial**。状态显示为 `OPEN`，且手柄已连接时，程序开始周期性发送完整状态。
+4. **观察输入**：操作摇杆、扳机和按键，查看界面中的数值与高亮状态。
+5. **查看发送内容**：使用 HEX 检查二进制帧；需要观察原始字节的文本解码结果时，切换为 Text 并选择编码。
+6. **停止使用**：点击 **Close Serial** 停止串口通信，或关闭程序窗口。关闭窗口时会等待工作线程退出并完成串口清理。
+
+Text 模式采用容错解码，出现不可读字符属于正常现象。切换 HEX / Text 只影响显示，不改变发送的数据。“清空显示”仅清除监视器记录，不重置累计发送计数。
+
+## 串口协议
+
+通信参数固定为 **115200 baud、8 数据位、无校验、1 停止位（8N1）**，关闭软硬件流控。
+
+每帧长度为 **17 字节**：
+
+```text
+AA 55 | 0C | LX LY RX RY LT RT Buttons | CRC_L CRC_H
+ 包头   长度          12 字节负载             CRC16
+```
+
+- `LX / LY / RX / RY`：有符号 16 位摇杆原始值，范围为 -32768～32767。
+- `LT / RT`：无符号 8 位扳机原始值，范围为 0～255。
+- `Buttons`：无符号 16 位按键位掩码。
+- 所有 16 位字段使用 **Little Endian**，低字节在前。
+- 校验使用 **CRC-16/MODBUS**，计算范围为长度字段和 12 字节负载，不包含包头。
+
+字段偏移、按键位映射、完整帧示例、C 语言解析代码及接收状态机建议见 **[下位机协议指南](docs/MCU_Protocol_Guide.md)**。
+
+## 使用说明与常见问题
+
+| 情况 | 说明或处理方式 |
 |---|---|
-| `main.py` | 应用入口、依赖错误提示、退出清理 |
-| `start.bat` | 双击启动，自动定位项目虚拟环境，无常驻控制台 |
-| `xbox_input.py` | XInput DLL 加载、ABI 结构体、设备检测和重连 |
-| `serial_manager.py` | 串口扫描、固定参数打开、关闭、完整写入与异常封装 |
-| `protocol.py` | 数据类、按钮映射、打包/解析、CRC 和显示格式 |
-| `controller.py` | 10 ms 后台调度、命令队列、快照和有界发送记录 |
-| `gui.py` | 摇杆绘图、扳机与按钮显示、串口控制和发送监视器 |
-| `requirements.txt` | Python 运行依赖 |
-| `docs/MCU_Protocol_Guide.md` | STM32 交接文档，含帧格式、示例和可编译 C99 解析器 |
-| `tests/` | 协议、模拟设备、pyserial 回环、GUI 和文档 C 代码验证 |
+| 启动时提示虚拟环境不存在 | 在项目目录执行首次安装命令，确认 `.venv` 创建成功 |
+| 启动时提示缺少依赖 | 使用 `.venv` 中的 Python 重新执行依赖安装命令 |
+| 手柄未连接 | 确认设备支持 XInput，检查连接；程序每 500 ms 自动探测重连 |
+| 列表中没有串口 | 检查模块连接和驱动，再点击“刷新串口” |
+| 串口打开失败 | 根据界面错误检查端口是否存在，或是否被其他串口工具占用 |
+| 串口拔出或发送失败 | 程序会关闭端口；排除故障后重新选择端口并点击 Open Serial |
+| 手柄不动但摇杆数值不为零 | 程序传输原始值，不进行死区过滤，摇杆中心可能存在轻微漂移 |
 
-## 验证
+手柄断开时，界面清零并暂停发送，不发送零状态替代帧。下位机应根据合法帧的接收时间实现超时处理；串口写入成功计数不代表下位机已确认接收。
+
+发送和 UI 刷新的目标周期均为 10 ms，实际频率受系统负载和设备延迟影响，不属于硬实时保证。Windows 11 在窗口最小化或完全被遮挡时可能降低计时精度，使用时建议保持窗口可见。[Windows 计时行为说明](https://learn.microsoft.com/en-us/windows/win32/api/timeapi/nf-timeapi-timebeginperiod)
+
+## 项目结构与开发
+
+| 文件或目录 | 用途 |
+|---|---|
+| `main.py` | 程序入口与退出清理 |
+| `gui.py` | 图形界面、状态显示与发送监视器 |
+| `controller.py` | 后台采样、发送调度与状态同步 |
+| `xbox_input.py` | XInput 手柄读取、检测与重连 |
+| `serial_manager.py` | 串口扫描、打开、关闭与发送 |
+| `protocol.py` | 数据结构、按键映射、帧打包与 CRC |
+| `start.bat` | 双击启动脚本 |
+| `requirements.txt` | Python 依赖清单 |
+| `docs/MCU_Protocol_Guide.md` | 下位机协议接入指南 |
+| `tests/` | 自动化测试源码 |
+| `LICENSE` | MIT 许可证 |
+
+调整发送周期可修改 `controller.py` 中的 `SEND_INTERVAL_MS`；调整界面刷新周期可修改 `gui.py` 中的 `GUI_REFRESH_MS`。
+
+修改代码后，可在项目目录运行自动化测试：
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-测试 GUI 使用 Qt offscreen 平台，不需要打开真实窗口；设备异常使用模拟对象，串口数据通路另外使用 pyserial `loop://` 回环验证。
-文档中的 C 代码在检测到 GCC 时自动提取、以 C99 和警告视为错误编译，再执行帧解析及流同步恢复测试；未安装 GCC 时跳过该项。
-编译产物保留在系统临时目录的 `xbox_c_test_*` 目录内供核验，测试不进行批量删除。
+测试涵盖协议、设备异常、界面和退出流程。文档中的 C 解析示例需要 GCC 进行编译验证，未安装 GCC 时会跳过对应测试。
 
-已验证的开发环境：Windows、Python 3.14.7、PySide6 6.11.2、pyserial 3.5。
-本次验证结果：26 项测试全部通过，包含启动后立即关闭、读取过程中退出、等待串口清理、超过原 2 秒等待时限的应用退出场景；黑色界面的离屏布局检查通过。
-`start.bat` 已从其他工作目录进行启动检查，确认窗口关闭后工作线程结束且 `pythonw` 进程退出。此前依赖一致性检查已通过。
-模拟手柄和模拟串口的 1.2 秒节拍测量产生 120 帧，帧间隔平均 10.004 ms、中位数 10.041 ms、最大 11.432 ms。
-以上数据为本机软件调度测量结果，不代表硬件线上延迟或长期时序保证。
-项目已完成测试，可正常运行。
+## 许可证
 
-## 实现核验片段
-
-完整状态打包见 `protocol.py`：
-
-```python
-PAYLOAD_STRUCT = struct.Struct("<hhhhBBH")
-body = bytes([PAYLOAD_SIZE]) + payload
-return HEADER + body + struct.pack("<H", crc16_modbus(body))
-```
-
-`<hhhhBBH` 明确规定四个 int16、两个 uint8、一个 uint16 使用小端排列，总共 12 字节；CRC 只覆盖 `LEN + payload`，追加 2 字节包头和 2 字节 CRC 后得到 17 字节。
-
-采样发送条件见 `controller.py`：
-
-```python
-state = self.reader.read()
-if state is not None and self.manager.is_open:  # 只发送本周期读取到的完整状态。
-    frame = pack_frame(state)
-    try:
-        self.manager.send(frame)
-```
-
-条件直接约束“手柄状态有效且串口已打开”，随后统一打包并发送，断线时不重复发送旧状态。此片段截取了完整方法的条件与发送部分。
-
-## 外部接口依据
-
-- [Microsoft XINPUT_GAMEPAD](https://learn.microsoft.com/en-us/windows/win32/api/xinput/ns-xinput-xinput_gamepad)：轴值、按钮映射与保留位。
-- [Microsoft XInputGetState](https://learn.microsoft.com/en-us/windows/win32/api/xinput/nf-xinput-xinputgetstate)：索引 0～3、返回码及连接检测。
-- [pyserial API](https://pyserial.readthedocs.io/en/latest/pyserial_api.html)：串口配置、写超时和写入长度。
+本项目采用 [MIT License](LICENSE)。
